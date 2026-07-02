@@ -4,6 +4,35 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import UniformTypeIdentifiers
 
+/// Output encoding for save / copy / drag-out.
+enum ExportFormat: String, CaseIterable, Identifiable {
+    case png, jpeg, heic
+
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .png: return "PNG"
+        case .jpeg: return "JPEG"
+        case .heic: return "HEIC"
+        }
+    }
+    var utType: UTType {
+        switch self {
+        case .png: return .png
+        case .jpeg: return .jpeg
+        case .heic: return .heic
+        }
+    }
+    var fileExtension: String {
+        switch self {
+        case .png: return "png"
+        case .jpeg: return "jpg"
+        case .heic: return "heic"
+        }
+    }
+    var isLossy: Bool { self != .png }
+}
+
 /// Central state for the editor: the loaded image, the live adjustments, and
 /// all I/O (open, save, clipboard, drag in/out). The view layer observes this.
 @MainActor
@@ -44,6 +73,28 @@ final class EditorModel: ObservableObject {
     /// The fit scale the canvas last used, reported back so the zoom readout
     /// and the zoom in/out steps have a concrete number in fit mode.
     @Published var fitScale: Double = 1
+
+    // Export settings. Live values used by save/copy/drag, persisted so they
+    // double as the user's defaults across launches (Preferences edits the
+    // same values).
+    @Published var exportFormat: ExportFormat {
+        didSet { UserDefaults.standard.set(exportFormat.rawValue, forKey: "exportFormat") }
+    }
+    @Published var exportQuality: Double {
+        didSet { UserDefaults.standard.set(exportQuality, forKey: "exportQuality") }
+    }
+    /// Output scale multiplier: 1 = source pixels, 0.5 = @1x from Retina, etc.
+    @Published var exportScale: Double {
+        didSet { UserDefaults.standard.set(exportScale, forKey: "exportScale") }
+    }
+    @Published var preserveMetadata: Bool {
+        didSet { UserDefaults.standard.set(preserveMetadata, forKey: "preserveMetadata") }
+    }
+    /// EXIF/TIFF/GPS/IPTC dictionaries of the source file, when it had any.
+    private var sourceMetadata: [String: Any]?
+    var hasSourceMetadata: Bool { sourceMetadata != nil }
+
+    @Published private(set) var recentFiles: [URL] = []
     /// Live luminance histogram, normalized to 0...1, in display space. It
     /// reflects every adjustment *except* the levels remap itself, so the
     /// levels handles keep pointing at the tones they operate on.
@@ -68,7 +119,25 @@ final class EditorModel: ObservableObject {
     var hasImage: Bool { original != nil }
 
     init() {
+        let d = UserDefaults.standard
+        exportFormat = ExportFormat(rawValue: d.string(forKey: "exportFormat") ?? "") ?? .png
+        exportQuality = d.object(forKey: "exportQuality") as? Double ?? 0.9
+        exportScale = d.object(forKey: "exportScale") as? Double ?? 1
+        preserveMetadata = d.bool(forKey: "preserveMetadata")
+        recentFiles = (d.stringArray(forKey: "recentFiles") ?? []).map { URL(fileURLWithPath: $0) }
         installKeyMonitor()
+    }
+
+    private func noteRecent(_ url: URL) {
+        var files = recentFiles.filter { $0.path != url.path }
+        files.insert(url, at: 0)
+        recentFiles = Array(files.prefix(10))
+        UserDefaults.standard.set(recentFiles.map(\.path), forKey: "recentFiles")
+    }
+
+    func clearRecents() {
+        recentFiles = []
+        UserDefaults.standard.removeObject(forKey: "recentFiles")
     }
 
     // MARK: - Loading
@@ -80,6 +149,7 @@ final class EditorModel: ObservableObject {
         pixelSize = img.extent.size
         zoom = nil
         panOffset = .zero
+        sourceMetadata = nil
         // A fresh image starts a fresh history; the reset to neutral must not
         // itself land on the undo stack.
         undoCommitTask?.cancel()
@@ -133,11 +203,18 @@ final class EditorModel: ObservableObject {
     }
 
     func load(url: URL) {
-        guard let img = CIImage(contentsOf: url) else {
+        // applyOrientationProperty bakes EXIF rotation in, so camera photos
+        // load upright and our own orientation state starts from .up.
+        guard let img = CIImage(contentsOf: url, options: [.applyOrientationProperty: true]) else {
             errorMessage = "Couldn't open “\(url.lastPathComponent)” — the file isn't a readable image."
             return
         }
         load(ciImage: img, url: url)
+        if let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+           let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [String: Any] {
+            sourceMetadata = props
+        }
+        noteRecent(url)
     }
 
     func load(nsImage: NSImage) {
@@ -165,17 +242,47 @@ final class EditorModel: ObservableObject {
         histogram = Self.computeHistogram(of: preLevels, context: context)
     }
 
-    /// Renders the current edit at full resolution as a CGImage.
+    /// Renders the current edit as a CGImage at the export scale.
     func renderCGImage() -> CGImage? {
         guard let original else { return nil }
-        let edited = adjustments.apply(to: original)
+        var edited = adjustments.apply(to: original)
+        if exportScale != 1 {
+            let f = CIFilter.lanczosScaleTransform()
+            f.inputImage = edited
+            f.scale = Float(exportScale)
+            f.aspectRatio = 1
+            edited = f.outputImage ?? edited
+        }
         return context.createCGImage(edited, from: edited.extent)
     }
 
-    func renderPNGData() -> Data? {
+    /// Encodes the current edit in the chosen export format, carrying the
+    /// source EXIF/GPS/IPTC across when the user opted to keep metadata.
+    func renderExportData() -> Data? {
         guard let cg = renderCGImage() else { return nil }
-        let rep = NSBitmapImageRep(cgImage: cg)
-        return rep.representation(using: .png, properties: [:])
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(
+            data, exportFormat.utType.identifier as CFString, 1, nil) else { return nil }
+
+        var props: [String: Any] = [:]
+        if exportFormat.isLossy {
+            props[kCGImageDestinationLossyCompressionQuality as String] = exportQuality
+        }
+        if preserveMetadata, let sourceMetadata {
+            for key in [kCGImagePropertyExifDictionary, kCGImagePropertyTIFFDictionary,
+                        kCGImagePropertyGPSDictionary, kCGImagePropertyIPTCDictionary] {
+                if let value = sourceMetadata[key as String] { props[key as String] = value }
+            }
+            // Rotation is baked into the pixels; a stale EXIF orientation
+            // would make other apps double-rotate.
+            if var tiff = props[kCGImagePropertyTIFFDictionary as String] as? [String: Any] {
+                tiff[kCGImagePropertyTIFFOrientation as String] = 1
+                props[kCGImagePropertyTIFFDictionary as String] = tiff
+            }
+        }
+        CGImageDestinationAddImage(dest, cg, props as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return data as Data
     }
 
     // MARK: - Undo / redo
@@ -416,9 +523,8 @@ final class EditorModel: ObservableObject {
     }
 
     func copy() {
-        guard let png = renderPNGData(), let img = NSImage(data: png) else {
-            NSSound.beep(); return
-        }
+        guard let cg = renderCGImage() else { NSSound.beep(); return }
+        let img = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.writeObjects([img])
@@ -433,25 +539,31 @@ final class EditorModel: ObservableObject {
         if panel.runModal() == .OK, let url = panel.url { load(url: url) }
     }
 
-    /// Saves over the source file when possible, otherwise prompts.
+    /// Saves over the source file when the chosen format matches it,
+    /// otherwise prompts so a format switch never clobbers the original.
     func save() {
         guard let url = fileURL else { saveAs(); return }
-        write(to: url)
+        let ext = url.pathExtension.lowercased()
+        let matches = ext == exportFormat.fileExtension
+            || (exportFormat == .jpeg && ext == "jpeg")
+        if matches { write(to: url) } else { saveAs() }
     }
 
     func saveAs() {
         guard hasImage else { return }
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.png]
-        panel.nameFieldStringValue = fileURL?.deletingPathExtension().lastPathComponent ?? "Untitled"
+        panel.allowedContentTypes = [exportFormat.utType]
+        let base = fileURL?.deletingPathExtension().lastPathComponent ?? "Untitled"
+        panel.nameFieldStringValue = base + "." + exportFormat.fileExtension
         if panel.runModal() == .OK, let url = panel.url {
             write(to: url)
             fileURL = url
+            noteRecent(url)
         }
     }
 
     private func write(to url: URL) {
-        guard let data = renderPNGData() else {
+        guard let data = renderExportData() else {
             errorMessage = "Couldn't render the image for saving."
             return
         }
@@ -462,16 +574,17 @@ final class EditorModel: ObservableObject {
 
     // MARK: - Drag out
 
-    /// Writes the current render to a temp PNG and returns a provider that
-    /// drops a file other apps can accept as an image.
+    /// Writes the current render to a temp file in the export format and
+    /// returns a provider that drops a file other apps accept as an image.
     func dragProvider() -> NSItemProvider? {
-        guard let data = renderPNGData() else { return nil }
-        let name = (fileURL?.deletingPathExtension().lastPathComponent ?? "Picolo") + ".png"
+        guard let data = renderExportData() else { return nil }
+        let name = (fileURL?.deletingPathExtension().lastPathComponent ?? "Picolo")
+            + "." + exportFormat.fileExtension
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
         do { try data.write(to: url) } catch { return nil }
         let provider = NSItemProvider()
         provider.suggestedName = name
-        provider.registerFileRepresentation(forTypeIdentifier: UTType.png.identifier,
+        provider.registerFileRepresentation(forTypeIdentifier: exportFormat.utType.identifier,
                                              fileOptions: [],
                                              visibility: .all) { completion in
             completion(url, true, nil)

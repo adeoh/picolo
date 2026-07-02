@@ -45,12 +45,12 @@ Make the one window feel first-class and native.
 
 The "copy out" half of the loop, beyond always-PNG.
 
-- [ ] Quality Slider/Format Selector Dropdown
-- [ ] Choose output format on save
-- [ ] Copy at chosen resolution (e.g. @1x from a Retina screenshot)
-- [ ] Preserve/strip metadata (EXIF) on export
-- [ ] Open recent files
-- [ ] Preferences window (default format, quality)
+- [x] Quality slider + format dropdown (PNG / JPEG / HEIC) in the inspector
+- [x] Choose output format on save (format switch prompts instead of clobbering the source)
+- [x] Copy at chosen resolution (scale dropdown: 3× 2× 1× ½× ¼×, applies to copy/save/drag)
+- [x] Preserve/strip metadata (EXIF/GPS/IPTC) on export, stale orientation scrubbed
+- [x] Open recent files (File ▸ Open Recent, last 10)
+- [x] Preferences window (⌘, — same values, persisted as defaults)
 
 ## Milestone 4 — Rounding out adjustments (v0.5)
 

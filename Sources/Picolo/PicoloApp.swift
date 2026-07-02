@@ -40,6 +40,16 @@ struct PicoloApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("Open…") { model.open() }
                     .keyboardShortcut("o")
+                Menu("Open Recent") {
+                    ForEach(model.recentFiles, id: \.self) { url in
+                        Button(url.lastPathComponent) { model.load(url: url) }
+                    }
+                    if !model.recentFiles.isEmpty {
+                        Divider()
+                        Button("Clear Menu") { model.clearRecents() }
+                    }
+                }
+                .disabled(model.recentFiles.isEmpty)
             }
             CommandGroup(replacing: .saveItem) {
                 Button("Save") { model.save() }
@@ -106,5 +116,44 @@ struct PicoloApp: App {
                     .disabled(!model.hasImage)
             }
         }
+
+        Settings {
+            PreferencesView(model: model)
+        }
+    }
+}
+
+/// ⌘, — the export settings double as persisted defaults, so this edits the
+/// same values as the inspector's Export group.
+private struct PreferencesView: View {
+    @ObservedObject var model: EditorModel
+
+    var body: some View {
+        Form {
+            Picker("Format:", selection: $model.exportFormat) {
+                ForEach(ExportFormat.allCases) { Text($0.displayName).tag($0) }
+            }
+            .fixedSize()
+            Picker("Scale:", selection: $model.exportScale) {
+                Text("3×").tag(3.0)
+                Text("2×").tag(2.0)
+                Text("1× (100%)").tag(1.0)
+                Text("½×").tag(0.5)
+                Text("¼×").tag(0.25)
+            }
+            .fixedSize()
+            if model.exportFormat.isLossy {
+                Slider(value: $model.exportQuality, in: 0.1...1) {
+                    Text("Quality: \(Int(model.exportQuality * 100))%")
+                }
+                .frame(maxWidth: 260)
+            }
+            Toggle("Keep metadata (EXIF) on export", isOn: $model.preserveMetadata)
+            Text("These are remembered as the defaults for every image.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(20)
+        .frame(width: 340)
     }
 }

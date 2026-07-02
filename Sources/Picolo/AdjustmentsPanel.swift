@@ -51,6 +51,32 @@ struct AdjustmentsPanel: View {
                     SliderRow(title: "Motion Blur", value: $model.adjustments.motionBlurRadius, range: 0...100, neutral: 0)
                     SliderRow(title: "Blur Angle", value: $model.adjustments.motionBlurAngle, range: -180...180, neutral: 0)
                 }
+                group("Export") {
+                    pickerRow("Format") {
+                        Picker("", selection: $model.exportFormat) {
+                            ForEach(ExportFormat.allCases) { Text($0.displayName).tag($0) }
+                        }
+                    }
+                    pickerRow("Scale") {
+                        Picker("", selection: $model.exportScale) {
+                            Text("3×").tag(3.0)
+                            Text("2×").tag(2.0)
+                            Text("1× (100%)").tag(1.0)
+                            Text("½×").tag(0.5)
+                            Text("¼×").tag(0.25)
+                        }
+                    }
+                    if model.exportFormat.isLossy {
+                        SliderRow(title: "Quality", value: $model.exportQuality, range: 0.1...1, neutral: 0.9)
+                    }
+                    Toggle("Keep metadata (EXIF)", isOn: $model.preserveMetadata)
+                        .font(.system(size: 11))
+                        .controlSize(.small)
+                        .disabled(!model.hasSourceMetadata)
+                        .help(model.hasSourceMetadata
+                              ? "Carry the source file's EXIF/GPS/IPTC into the export"
+                              : "This image has no metadata to keep")
+                }
 
                 Button("Reset All") { model.reset() }
                     .disabled(model.adjustments.isNeutral)
@@ -63,6 +89,19 @@ struct AdjustmentsPanel: View {
         }
         .frame(width: 230)
         .frame(maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func pickerRow<Content: View>(_ title: String, @ViewBuilder _ picker: () -> Content) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+            Spacer()
+            picker()
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
+        }
     }
 
     @ViewBuilder
