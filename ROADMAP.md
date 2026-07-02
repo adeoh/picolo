@@ -22,12 +22,12 @@ Status legend: `[ ]` planned · `[~]` in progress · `[x]` done
 The features whose absence makes users hesitate. Undo and crop are the two
 most-expected functions in any editor; error feedback makes failures visible.
 
-- [ ] Undo / redo (⌘Z / ⇧⌘Z) across all adjustment changes
-- [ ] Crop (freeform + fixed aspect ratios, drag directly on canvas)
-- [ ] Rotate 90° left/right, flip horizontal / vertical
-- [ ] Before/after compare (hold a key to peek at the original)
-- [ ] Real error UI where a beep isn't enough (failed save/open must not be silent)
-- [ ] Checkerboard backing for transparency
+- [x] Undo / redo (⌘Z / ⇧⌘Z) across all adjustment changes
+- [x] Crop (⌘K: freeform + fixed aspect ratios, drag directly on canvas)
+- [x] Rotate 90° left/right (⌘[ / ⌘]), flip horizontal / vertical (⇧⌘H / ⇧⌘J)
+- [x] Before/after compare (hold B to peek at the original)
+- [x] Real error UI where a beep isn't enough (failed save/open must not be silent)
+- [x] Checkerboard backing for transparency (was already in v0.1)
 
 ## Milestone 2 — Modern canvas & UX polish (v0.3)
 
@@ -39,14 +39,13 @@ Make the one window feel first-class and native.
 - [ ] Keyboard nudge on focused slider (arrow keys; keyboard-first round-trip)
 - [ ] App icon + About panel
 - [ ] Dark/light appropriate chrome, SwiftUI materials pass
-- [ ] Fullscreen / distraction-free mode
+
 
 ## Milestone 3 — Output flexibility (v0.4)
 
 The "copy out" half of the loop, beyond always-PNG.
 
-- [ ] Export as JPEG (with quality slider)
-- [ ] Export as HEIC / WebP
+- [ ] Quality Slider/Format Selector Dropdown
 - [ ] Choose output format on save
 - [ ] Copy at chosen resolution (e.g. @1x from a Retina screenshot)
 - [ ] Preserve/strip metadata (EXIF) on export
@@ -78,15 +77,17 @@ conventions below.
 
 ### Geometry
 - [ ] Straighten / rotate by angle (with auto-crop)
-- [ ] Resize / scale to dimensions
+- [ ] Resize / scale to dimensions (this should be a dropdown along with export 1x 2x 3x etc)
 
 ## Milestone 5 — Workflow (v0.6)
 
 - [ ] Copy/paste adjustment settings between images
 - [ ] Reset individual groups (not just single sliders / all)
+- [ ] Collapse groups
 
 ## Ideas (unsorted, may not fit the "minimal" goal)
 
+- [ ] Shader library
 - [ ] One-click auto-enhance
 - [ ] Preset filters (only if built purely from existing adjustments)
 - [ ] Save & load adjustment presets

@@ -11,12 +11,21 @@ struct ImageCanvas: View {
         ZStack {
             CheckerboardBackground()
 
-            if let preview = model.preview {
-                Image(nsImage: preview)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .padding(16)
-                    .onDrag { model.dragProvider() ?? NSItemProvider() }
+            if let display = model.displayImage {
+                GeometryReader { geo in
+                    let fit = Self.fitRect(imageSize: display.size, in: geo.size, inset: 16)
+                    image(display, in: fit)
+                    if model.isCropping {
+                        CropOverlay(model: model, imageRect: fit)
+                    }
+                    if model.showOriginal {
+                        Text("BEFORE")
+                            .font(.system(size: 10, weight: .semibold))
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .position(x: geo.size.width / 2, y: 24)
+                    }
+                }
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "photo.on.rectangle.angled")
@@ -37,6 +46,34 @@ struct ImageCanvas: View {
         .onDrop(of: [.fileURL, .image, .png, .tiff], isTargeted: $dropTargeted) { providers in
             handleDrop(providers)
         }
+    }
+
+    @ViewBuilder
+    private func image(_ nsImage: NSImage, in fit: CGRect) -> some View {
+        let base = Image(nsImage: nsImage)
+            .resizable()
+            .frame(width: fit.width, height: fit.height)
+            .position(x: fit.midX, y: fit.midY)
+        // Drag-out conflicts with the crop handles, so it pauses in crop mode.
+        if model.isCropping {
+            base
+        } else {
+            base.onDrag { model.dragProvider() ?? NSItemProvider() }
+        }
+    }
+
+    /// Aspect-fit `imageSize` into `container` with a margin on all sides.
+    static func fitRect(imageSize: CGSize, in container: CGSize, inset: CGFloat) -> CGRect {
+        let avail = CGSize(width: max(container.width - inset * 2, 1),
+                           height: max(container.height - inset * 2, 1))
+        guard imageSize.width > 0, imageSize.height > 0 else {
+            return CGRect(origin: CGPoint(x: inset, y: inset), size: avail)
+        }
+        let scale = min(avail.width / imageSize.width, avail.height / imageSize.height)
+        let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        return CGRect(x: (container.width - size.width) / 2,
+                      y: (container.height - size.height) / 2,
+                      width: size.width, height: size.height)
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {

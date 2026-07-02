@@ -7,6 +7,14 @@ import CoreImage.CIFilterBuiltins
 /// identity transform — `apply(to:)` on a freshly created value returns the
 /// input image unchanged.
 struct Adjustments: Equatable {
+    // Geometry — orientation is one of the 8 EXIF/dihedral states, crop is a
+    // normalized (0…1, bottom-left origin like Core Image) rect within the
+    // oriented image. Both neutral by default.
+    var orientation: CGImagePropertyOrientation = .up
+    var cropRect: CGRect = Adjustments.fullCrop
+
+    static let fullCrop = CGRect(x: 0, y: 0, width: 1, height: 1)
+
     var brightness: Double = 0      // CIColorControls: -1 ... 1, neutral 0
     var contrast: Double = 1        // CIColorControls: 0.25 ... 4, neutral 1
     var saturation: Double = 1      // CIColorControls: 0 ... 2, neutral 1
@@ -31,9 +39,11 @@ struct Adjustments: Equatable {
     var isNeutral: Bool { self == .neutral }
 
     /// Applies the pipeline to `input` and returns the edited image.
-    /// Order is exposure → tone/color → highlight-shadow → white balance → gamma.
+    /// Order is geometry → exposure → tone/color → highlight-shadow → white
+    /// balance → gamma.
     func apply(to input: CIImage) -> CIImage {
-        var image = input
+        var image = applyGeometry(to: input)
+        let extent = image.extent
 
         if exposure != 0 {
             let f = CIFilter.exposureAdjust()
@@ -79,8 +89,75 @@ struct Adjustments: Equatable {
             image = f.outputImage ?? image
         }
 
-        // Clamp back to the original extent; some filters expand it.
-        return image.cropped(to: input.extent)
+        // Clamp back to the post-geometry extent; some filters expand it.
+        return image.cropped(to: extent)
+    }
+
+    // MARK: - Geometry
+
+    /// Orients (rotate/flip) then crops. Runs before any color work so all
+    /// tonal filters only ever see the pixels that survive.
+    private func applyGeometry(to input: CIImage) -> CIImage {
+        var image = input
+        if orientation != .up {
+            image = image.oriented(orientation)
+        }
+        if cropRect != Adjustments.fullCrop {
+            let e = image.extent
+            let r = CGRect(x: e.minX + cropRect.minX * e.width,
+                           y: e.minY + cropRect.minY * e.height,
+                           width: cropRect.width * e.width,
+                           height: cropRect.height * e.height)
+                .integral.intersection(e)
+            if !r.isEmpty { image = image.cropped(to: r) }
+        }
+        return image
+    }
+
+    /// Orientation composition in display space: `next` applied on top of what
+    /// the user already sees. The 8 EXIF orientations form the dihedral group,
+    /// so every rotate/flip sequence stays representable.
+    mutating func rotate(clockwise: Bool) {
+        let cw: [CGImagePropertyOrientation: CGImagePropertyOrientation] = [
+            .up: .right, .right: .down, .down: .left, .left: .up,
+            .upMirrored: .rightMirrored, .rightMirrored: .downMirrored,
+            .downMirrored: .leftMirrored, .leftMirrored: .upMirrored,
+        ]
+        let table = clockwise ? cw : Dictionary(uniqueKeysWithValues: cw.map { ($1, $0) })
+        orientation = table[orientation] ?? orientation
+        cropRect = Adjustments.rotateCrop(cropRect, clockwise: clockwise)
+    }
+
+    mutating func flip(horizontal: Bool) {
+        let flipH: [CGImagePropertyOrientation: CGImagePropertyOrientation] = [
+            .up: .upMirrored, .upMirrored: .up, .down: .downMirrored, .downMirrored: .down,
+            .right: .leftMirrored, .leftMirrored: .right, .left: .rightMirrored, .rightMirrored: .left,
+        ]
+        let flipV: [CGImagePropertyOrientation: CGImagePropertyOrientation] = [
+            .up: .downMirrored, .downMirrored: .up, .down: .upMirrored, .upMirrored: .down,
+            .right: .rightMirrored, .rightMirrored: .right, .left: .leftMirrored, .leftMirrored: .left,
+        ]
+        let table = horizontal ? flipH : flipV
+        orientation = table[orientation] ?? orientation
+        cropRect = Adjustments.flipCrop(cropRect, horizontal: horizontal)
+    }
+
+    /// The crop is defined within the oriented image, so re-orienting must
+    /// carry the crop window along or the visible framing would jump.
+    private static func rotateCrop(_ c: CGRect, clockwise: Bool) -> CGRect {
+        guard c != fullCrop else { return c }
+        // CI space is y-up. Rotating the image 90° CW maps a point (x, y) of
+        // the old unit square to (y, 1 - x) in the new one; CCW is the inverse.
+        return clockwise
+            ? CGRect(x: c.minY, y: 1 - c.maxX, width: c.height, height: c.width)
+            : CGRect(x: 1 - c.maxY, y: c.minX, width: c.height, height: c.width)
+    }
+
+    private static func flipCrop(_ c: CGRect, horizontal: Bool) -> CGRect {
+        guard c != fullCrop else { return c }
+        return horizontal
+            ? CGRect(x: 1 - c.maxX, y: c.minY, width: c.width, height: c.height)
+            : CGRect(x: c.minX, y: 1 - c.maxY, width: c.width, height: c.height)
     }
 
     private var levelsAreNeutral: Bool {

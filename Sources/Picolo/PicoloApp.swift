@@ -14,6 +14,14 @@ struct PicoloApp: App {
             }
             .frame(minWidth: 620, minHeight: 420)
             .onOpenURL { url in model.load(url: url) }
+            .alert("Something went wrong", isPresented: Binding(
+                get: { model.errorMessage != nil },
+                set: { if !$0 { model.errorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(model.errorMessage ?? "")
+            }
         }
         .commands {
             // File
@@ -27,6 +35,34 @@ struct PicoloApp: App {
                     .disabled(!model.hasImage)
                 Button("Save As…") { model.saveAs() }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
+                    .disabled(!model.hasImage)
+            }
+            CommandGroup(replacing: .undoRedo) {
+                Button("Undo") { model.undo() }
+                    .keyboardShortcut("z")
+                    .disabled(!model.canUndo)
+                Button("Redo") { model.redo() }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .disabled(!model.canRedo)
+            }
+            // Image — geometry
+            CommandMenu("Image") {
+                Button("Crop…") { model.beginCrop() }
+                    .keyboardShortcut("k")
+                    .disabled(!model.hasImage || model.isCropping)
+                Divider()
+                Button("Rotate Left") { model.rotateLeft() }
+                    .keyboardShortcut("[")
+                    .disabled(!model.hasImage)
+                Button("Rotate Right") { model.rotateRight() }
+                    .keyboardShortcut("]")
+                    .disabled(!model.hasImage)
+                Divider()
+                Button("Flip Horizontal") { model.flipHorizontal() }
+                    .keyboardShortcut("h", modifiers: [.command, .shift])
+                    .disabled(!model.hasImage)
+                Button("Flip Vertical") { model.flipVertical() }
+                    .keyboardShortcut("j", modifiers: [.command, .shift])
                     .disabled(!model.hasImage)
             }
             // Edit — paste/copy of the whole image
