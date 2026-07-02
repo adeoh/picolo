@@ -58,26 +58,28 @@ One-slider, whole-image adjustments only. Each follows the "adding a filter"
 conventions below.
 
 ### Tone & color
-- [ ] Vibrance (saturation that protects skin tones)
-- [ ] Tint (green↔magenta, paired with existing temperature)
-- [ ] Clarity / structure (local contrast)
-- [ ] Black & white / monochrome with channel mix
-- [ ] Hue rotation
-- [ ] Color balance (shadows / midtones / highlights)
+- [x] Vibrance (saturation that protects skin tones)
+- [x] Tint (green↔magenta, paired with existing temperature; + = magenta like PS/LR)
+- [x] Clarity / structure (local contrast via wide unsharp mask)
+- [x] Black & white / monochrome with channel mix (toggle reveals R/G/B mix)
+- [x] Hue rotation
+- [ ] Color balance (shadows / midtones / highlights) — deferred: 9 sliders
+      doesn't fit the panel; needs a compact control design first
 
 ### Effects
-- [ ] Sharpen / unsharp mask
-- [ ] Gaussian blur (single strength slider)
-- [ ] Vignette (amount + radius)
-- [ ] Grain / noise (amount)
-- [ ] Zoom / radial blur (complements motion blur)
-- [ ] Sepia / duotone
-- [ ] Posterize
-- [ ] Invert
+- [x] Sharpen / unsharp mask
+- [x] Gaussian blur (single strength slider)
+- [x] Vignette (amount + radius)
+- [x] Grain / noise (amount)
+- [x] Zoom / radial blur (complements motion blur)
+- [x] Sepia (duotone deferred — needs two color wells)
+- [x] Posterize (strength slider, quantizes in display space)
+- [x] Invert
+- [x] Motion blur (strength + direction) — moved from v0.1 list into the Blur group
 
 ### Geometry
-- [ ] Straighten / rotate by angle (with auto-crop)
-- [ ] Resize / scale to dimensions (this should be a dropdown along with export 1x 2x 3x etc)
+- [x] Straighten / rotate by angle (with auto-crop, no empty corners)
+- [x] Resize / scale to dimensions — covered by the Export scale dropdown (3×…¼×)
 
 ## Milestone 5 — Workflow (v0.6)
 

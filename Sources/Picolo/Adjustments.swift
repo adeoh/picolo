@@ -7,10 +7,11 @@ import CoreImage.CIFilterBuiltins
 /// identity transform — `apply(to:)` on a freshly created value returns the
 /// input image unchanged.
 struct Adjustments: Equatable {
-    // Geometry — orientation is one of the 8 EXIF/dihedral states, crop is a
-    // normalized (0…1, bottom-left origin like Core Image) rect within the
-    // oriented image. Both neutral by default.
+    // Geometry — orientation is one of the 8 EXIF/dihedral states, straighten
+    /// is a small free rotation with auto-crop, crop is a normalized (0…1,
+    /// bottom-left origin like Core Image) rect within the oriented image.
     var orientation: CGImagePropertyOrientation = .up
+    var straightenAngle: Double = 0 // degrees: -15 ... 15, neutral 0
     var cropRect: CGRect = Adjustments.fullCrop
 
     static let fullCrop = CGRect(x: 0, y: 0, width: 1, height: 1)
@@ -22,10 +23,29 @@ struct Adjustments: Equatable {
     var highlights: Double = 1      // CIHighlightShadowAdjust: 0 ... 1, neutral 1
     var shadows: Double = 0         // CIHighlightShadowAdjust: -1 ... 1, neutral 0
     var temperature: Double = 0     // offset around 6500K neutral: -2000 ... 2000
+    var tint: Double = 0            // green ↔ magenta offset: -150 ... 150, neutral 0
+    var vibrance: Double = 0        // CIVibrance: -1 ... 1, neutral 0
+    var hueRotation: Double = 0     // degrees: -180 ... 180, neutral 0
+    var clarity: Double = 0         // local contrast: 0 ... 1, neutral 0
 
-    // Motion blur — directional blur with a strength (radius) and direction (angle).
-    var motionBlurRadius: Double = 0    // CIMotionBlur radius in px: 0 ... 100, neutral 0
-    var motionBlurAngle: Double = 0     // direction in degrees: -180 ... 180, neutral 0
+    // Black & white with a channel mix (Rec. 601 luma by default).
+    var monochrome: Bool = false
+    var monoR: Double = 0.299
+    var monoG: Double = 0.587
+    var monoB: Double = 0.114
+
+    // Detail & stylize.
+    var sharpen: Double = 0         // CISharpenLuminance: 0 ... 2, neutral 0
+    var gaussianBlur: Double = 0    // radius px: 0 ... 50, neutral 0
+    var motionBlurRadius: Double = 0    // CIMotionBlur radius px: 0 ... 100, neutral 0
+    var motionBlurAngle: Double = 0     // direction degrees: -180 ... 180, neutral 0
+    var zoomBlur: Double = 0        // CIZoomBlur amount: 0 ... 40, neutral 0
+    var vignette: Double = 0        // intensity: 0 ... 1, neutral 0
+    var vignetteRadius: Double = 1  // 0 ... 2; only sampled while vignette > 0
+    var grain: Double = 0           // 0 ... 1, neutral 0
+    var sepia: Double = 0           // CISepiaTone: 0 ... 1, neutral 0
+    var posterize: Double = 0       // strength: 0 (off) ... 14 (2 levels)
+    var invert: Bool = false
 
     // Levels — input/output remap with a midtone gamma, all neutral by default.
     var inputBlack: Double = 0      // 0 ... 1, neutral 0
@@ -39,9 +59,10 @@ struct Adjustments: Equatable {
     var isNeutral: Bool { self == .neutral }
 
     /// Applies the pipeline to `input` and returns the edited image.
-    /// Order is geometry → exposure → tone/color → highlight-shadow → white
-    /// balance → gamma. `includeLevels: false` stops just before the levels
-    /// remap — that's the image the live levels histogram should describe.
+    /// Order: geometry → tone/color → levels → stylize → detail/blur →
+    /// finishing (vignette, grain). `includeLevels: false` stops just before
+    /// the levels remap — that's the image the live levels histogram should
+    /// describe.
     func apply(to input: CIImage, includeLevels: Bool = true) -> CIImage {
         var image = applyGeometry(to: input)
         let extent = image.extent
@@ -62,6 +83,13 @@ struct Adjustments: Equatable {
             image = f.outputImage ?? image
         }
 
+        if vibrance != 0 {
+            let f = CIFilter.vibrance()
+            f.inputImage = image
+            f.amount = Float(vibrance)
+            image = f.outputImage ?? image
+        }
+
         if highlights != 1 || shadows != 0 {
             let f = CIFilter.highlightShadowAdjust()
             f.inputImage = image
@@ -70,26 +98,103 @@ struct Adjustments: Equatable {
             image = f.outputImage ?? image
         }
 
-        if temperature != 0 {
+        if temperature != 0 || tint != 0 {
             let f = CIFilter.temperatureAndTint()
             f.inputImage = image
             f.neutral = CIVector(x: 6500, y: 0)
-            f.targetNeutral = CIVector(x: 6500 + temperature, y: 0)
+            // Negated so the slider matches convention: + = magenta, − = green.
+            f.targetNeutral = CIVector(x: 6500 + temperature, y: -tint)
             image = f.outputImage ?? image
+        }
+
+        if hueRotation != 0 {
+            let f = CIFilter.hueAdjust()
+            f.inputImage = image
+            f.angle = Float(hueRotation * .pi / 180)
+            image = f.outputImage ?? image
+        }
+
+        if clarity > 0 {
+            // Local contrast = a wide, gentle unsharp mask.
+            let f = CIFilter.unsharpMask()
+            f.inputImage = image.clampedToExtent()
+            f.radius = Float(max(min(extent.width, extent.height) * 0.02, 2))
+            f.intensity = Float(clarity)
+            image = (f.outputImage ?? image).cropped(to: extent)
         }
 
         if includeLevels {
             image = applyLevels(to: image)
         }
 
+        if monochrome {
+            image = applyMonochrome(to: image)
+        }
+
+        if sepia > 0 {
+            let f = CIFilter.sepiaTone()
+            f.inputImage = image
+            f.intensity = Float(sepia)
+            image = f.outputImage ?? image
+        }
+
+        if posterize >= 1 {
+            // More slider = fewer levels (16 … 2), quantized in display space
+            // so the bands sit where the eye expects them.
+            let f = CIFilter.colorPosterize()
+            f.inputImage = encodeToSRGB(image)
+            f.levels = Float(16 - posterize)
+            image = decodeFromSRGB(f.outputImage ?? image)
+        }
+
+        if invert {
+            let f = CIFilter.colorInvert()
+            f.inputImage = encodeToSRGB(image)
+            image = decodeFromSRGB(f.outputImage ?? image)
+        }
+
+        if sharpen > 0 {
+            let f = CIFilter.sharpenLuminance()
+            f.inputImage = image.clampedToExtent()
+            f.sharpness = Float(sharpen)
+            image = (f.outputImage ?? image).cropped(to: extent)
+        }
+
+        if gaussianBlur > 0 {
+            let f = CIFilter.gaussianBlur()
+            f.inputImage = image.clampedToExtent()
+            f.radius = Float(gaussianBlur)
+            image = f.outputImage ?? image
+        }
+
         if motionBlurRadius > 0 {
-            // Clamp first so the blur samples real edge pixels instead of fading
-            // into transparency at the borders.
+            // Clamp first so the blur samples real edge pixels instead of
+            // fading into transparency at the borders.
             let f = CIFilter.motionBlur()
             f.inputImage = image.clampedToExtent()
             f.radius = Float(motionBlurRadius)
             f.angle = Float(motionBlurAngle * .pi / 180)
             image = f.outputImage ?? image
+        }
+
+        if zoomBlur > 0 {
+            let f = CIFilter.zoomBlur()
+            f.inputImage = image.clampedToExtent()
+            f.center = CGPoint(x: extent.midX, y: extent.midY)
+            f.amount = Float(zoomBlur)
+            image = f.outputImage ?? image
+        }
+
+        if vignette > 0 {
+            let f = CIFilter.vignette()
+            f.inputImage = image
+            f.intensity = Float(vignette)
+            f.radius = Float(vignetteRadius)
+            image = f.outputImage ?? image
+        }
+
+        if grain > 0 {
+            image = applyGrain(to: image, extent: extent)
         }
 
         // Clamp back to the post-geometry extent; some filters expand it.
@@ -98,12 +203,16 @@ struct Adjustments: Equatable {
 
     // MARK: - Geometry
 
-    /// Orients (rotate/flip) then crops. Runs before any color work so all
-    /// tonal filters only ever see the pixels that survive.
+    /// Orients (rotate/flip), straightens (small rotation + auto-crop), then
+    /// crops. Runs before any color work so all tonal filters only ever see
+    /// the pixels that survive.
     private func applyGeometry(to input: CIImage) -> CIImage {
         var image = input
         if orientation != .up {
             image = image.oriented(orientation)
+        }
+        if straightenAngle != 0 {
+            image = straightened(image)
         }
         if cropRect != Adjustments.fullCrop {
             let e = image.extent
@@ -115,6 +224,31 @@ struct Adjustments: Equatable {
             if !r.isEmpty { image = image.cropped(to: r) }
         }
         return image
+    }
+
+    /// Rotates by the straighten angle and crops to the largest axis-aligned
+    /// rectangle that contains no empty corners (the classic max-area
+    /// inscribed-rect formula).
+    private func straightened(_ input: CIImage) -> CIImage {
+        let w = input.extent.width, h = input.extent.height
+        let rad = straightenAngle * .pi / 180
+        let rotated = input.transformed(by: CGAffineTransform(rotationAngle: rad))
+
+        let a = abs(rad), sinA = sin(a), cosA = cos(a)
+        let long = max(w, h), short = min(w, h)
+        var wr: CGFloat, hr: CGFloat
+        if short <= 2 * sinA * cosA * long {
+            let x = 0.5 * short
+            (wr, hr) = w >= h ? (x / sinA, x / cosA) : (x / cosA, x / sinA)
+        } else {
+            let cos2a = cosA * cosA - sinA * sinA
+            wr = (w * cosA - h * sinA) / cos2a
+            hr = (h * cosA - w * sinA) / cos2a
+        }
+        let e = rotated.extent
+        let crop = CGRect(x: e.midX - wr / 2, y: e.midY - hr / 2, width: wr, height: hr)
+            .integral.intersection(e)
+        return crop.isEmpty ? rotated : rotated.cropped(to: crop)
     }
 
     /// Orientation composition in display space: `next` applied on top of what
@@ -161,6 +295,44 @@ struct Adjustments: Equatable {
         return horizontal
             ? CGRect(x: 1 - c.maxX, y: c.minY, width: c.width, height: c.height)
             : CGRect(x: c.minX, y: 1 - c.maxY, width: c.width, height: c.height)
+    }
+
+    // MARK: - Stylize helpers
+
+    /// Weighted-luma monochrome in display space; the weights are normalized
+    /// so the mix sliders change tone response, not overall brightness.
+    private func applyMonochrome(to input: CIImage) -> CIImage {
+        let image = encodeToSRGB(input)
+        let total = max(monoR + monoG + monoB, 0.001)
+        let r = CGFloat(monoR / total), g = CGFloat(monoG / total), b = CGFloat(monoB / total)
+        let f = CIFilter.colorMatrix()
+        f.inputImage = image
+        f.rVector = CIVector(x: r, y: g, z: b, w: 0)
+        f.gVector = CIVector(x: r, y: g, z: b, w: 0)
+        f.bVector = CIVector(x: r, y: g, z: b, w: 0)
+        f.aVector = CIVector(x: 0, y: 0, z: 0, w: 1)
+        return decodeFromSRGB(f.outputImage ?? image)
+    }
+
+    /// Film grain: uniform noise remapped around mid-gray and overlay-blended,
+    /// so 0.5 stays identity and strength scales the deviation.
+    private func applyGrain(to input: CIImage, extent: CGRect) -> CIImage {
+        guard let noise = CIFilter.randomGenerator().outputImage else { return input }
+        let k = CGFloat(grain * 0.25)
+        let gray = CIFilter.colorControls()
+        gray.inputImage = noise
+        gray.saturation = 0
+        let remap = CIFilter.colorMatrix()
+        remap.inputImage = gray.outputImage
+        remap.rVector = CIVector(x: 2 * k, y: 0, z: 0, w: 0)
+        remap.gVector = CIVector(x: 0, y: 2 * k, z: 0, w: 0)
+        remap.bVector = CIVector(x: 0, y: 0, z: 2 * k, w: 0)
+        remap.aVector = CIVector(x: 0, y: 0, z: 0, w: 1)
+        remap.biasVector = CIVector(x: 0.5 - k, y: 0.5 - k, z: 0.5 - k, w: 0)
+        let blend = CIFilter.overlayBlendMode()
+        blend.inputImage = remap.outputImage?.cropped(to: extent)
+        blend.backgroundImage = input
+        return blend.outputImage ?? input
     }
 
     private var levelsAreNeutral: Bool {

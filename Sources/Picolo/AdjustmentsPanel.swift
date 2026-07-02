@@ -35,6 +35,7 @@ struct AdjustmentsPanel: View {
                     SliderRow(title: "Exposure", value: $model.adjustments.exposure, range: -3...3, neutral: 0)
                     SliderRow(title: "Brightness", value: $model.adjustments.brightness, range: -1...1, neutral: 0)
                     SliderRow(title: "Contrast", value: $model.adjustments.contrast, range: 0.25...4, neutral: 1)
+                    SliderRow(title: "Clarity", value: $model.adjustments.clarity, range: 0...1, neutral: 0)
                 }
                 group("Light") {
                     SliderRow(title: "Highlights", value: $model.adjustments.highlights, range: 0...1, neutral: 1)
@@ -45,11 +46,38 @@ struct AdjustmentsPanel: View {
                 }
                 group("Color") {
                     SliderRow(title: "Saturation", value: $model.adjustments.saturation, range: 0...2, neutral: 1)
+                    SliderRow(title: "Vibrance", value: $model.adjustments.vibrance, range: -1...1, neutral: 0)
                     SliderRow(title: "Temperature", value: $model.adjustments.temperature, range: -2000...2000, neutral: 0)
+                    SliderRow(title: "Tint", value: $model.adjustments.tint, range: -150...150, neutral: 0)
+                    SliderRow(title: "Hue", value: $model.adjustments.hueRotation, range: -180...180, neutral: 0)
+                }
+                group("Black & White") {
+                    toggleRow("Monochrome", isOn: $model.adjustments.monochrome)
+                    if model.adjustments.monochrome {
+                        SliderRow(title: "Red Mix", value: $model.adjustments.monoR, range: 0...1, neutral: 0.299)
+                        SliderRow(title: "Green Mix", value: $model.adjustments.monoG, range: 0...1, neutral: 0.587)
+                        SliderRow(title: "Blue Mix", value: $model.adjustments.monoB, range: 0...1, neutral: 0.114)
+                    }
+                }
+                group("Detail") {
+                    SliderRow(title: "Sharpen", value: $model.adjustments.sharpen, range: 0...2, neutral: 0)
+                    SliderRow(title: "Grain", value: $model.adjustments.grain, range: 0...1, neutral: 0)
+                }
+                group("Blur") {
+                    SliderRow(title: "Gaussian", value: $model.adjustments.gaussianBlur, range: 0...50, neutral: 0)
+                    SliderRow(title: "Motion", value: $model.adjustments.motionBlurRadius, range: 0...100, neutral: 0)
+                    SliderRow(title: "Motion Angle", value: $model.adjustments.motionBlurAngle, range: -180...180, neutral: 0)
+                    SliderRow(title: "Zoom", value: $model.adjustments.zoomBlur, range: 0...40, neutral: 0)
                 }
                 group("Effects") {
-                    SliderRow(title: "Motion Blur", value: $model.adjustments.motionBlurRadius, range: 0...100, neutral: 0)
-                    SliderRow(title: "Blur Angle", value: $model.adjustments.motionBlurAngle, range: -180...180, neutral: 0)
+                    SliderRow(title: "Vignette", value: $model.adjustments.vignette, range: 0...1, neutral: 0)
+                    SliderRow(title: "Vignette Radius", value: $model.adjustments.vignetteRadius, range: 0...2, neutral: 1)
+                    SliderRow(title: "Sepia", value: $model.adjustments.sepia, range: 0...1, neutral: 0)
+                    SliderRow(title: "Posterize", value: $model.adjustments.posterize, range: 0...14, neutral: 0)
+                    toggleRow("Invert", isOn: $model.adjustments.invert)
+                }
+                group("Geometry") {
+                    SliderRow(title: "Straighten", value: $model.adjustments.straightenAngle, range: -15...15, neutral: 0)
                 }
                 group("Export") {
                     pickerRow("Format") {
@@ -89,6 +117,14 @@ struct AdjustmentsPanel: View {
         }
         .frame(width: 230)
         .frame(maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
+        Toggle(title, isOn: isOn)
+            .font(.system(size: 11, weight: .medium))
+            .toggleStyle(.switch)
+            .controlSize(.mini)
     }
 
     @ViewBuilder
