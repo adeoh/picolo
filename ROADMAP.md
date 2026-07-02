@@ -83,9 +83,9 @@ conventions below.
 
 ## Milestone 5 — Workflow (v0.6)
 
-- [ ] Copy/paste adjustment settings between images
-- [ ] Reset individual groups (not just single sliders / all)
-- [ ] Collapse groups
+- [x] Copy/paste adjustment settings between images (⌥⌘C / ⌥⌘V; geometry stays with the image)
+- [x] Reset individual groups (↺ button in each group header, one undo step)
+- [x] Collapse groups (click a group header; state persists)
 
 ## Ideas (unsorted, may not fit the "minimal" goal)
 

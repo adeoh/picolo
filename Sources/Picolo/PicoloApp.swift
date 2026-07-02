@@ -111,6 +111,13 @@ struct PicoloApp: App {
                 Button("Paste Image") { model.paste() }
                     .keyboardShortcut("v")
                 Divider()
+                Button("Copy Adjustments") { model.copyAdjustments() }
+                    .keyboardShortcut("c", modifiers: [.command, .option])
+                    .disabled(!model.hasImage)
+                Button("Paste Adjustments") { model.pasteAdjustments() }
+                    .keyboardShortcut("v", modifiers: [.command, .option])
+                    .disabled(!model.hasImage || !model.canPasteAdjustments)
+                Divider()
                 Button("Reset Adjustments") { model.reset() }
                     .keyboardShortcut("r")
                     .disabled(!model.hasImage)

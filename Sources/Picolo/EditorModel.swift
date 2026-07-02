@@ -370,6 +370,24 @@ final class EditorModel: ObservableObject {
 
     func reset() { adjustments = .neutral }
 
+    /// Copy/paste of adjustment settings between images. Geometry stays with
+    /// the image it belongs to — pasting a look shouldn't re-crop the target.
+    private var copiedAdjustments: Adjustments?
+    var canPasteAdjustments: Bool { copiedAdjustments != nil }
+
+    func copyAdjustments() {
+        guard hasImage else { return }
+        copiedAdjustments = adjustments
+    }
+
+    func pasteAdjustments() {
+        guard hasImage, var pasted = copiedAdjustments else { return }
+        pasted.orientation = adjustments.orientation
+        pasted.straightenAngle = adjustments.straightenAngle
+        pasted.cropRect = adjustments.cropRect
+        adjustments = pasted
+    }
+
     func rotateLeft() { adjustments.rotate(clockwise: false) }
     func rotateRight() { adjustments.rotate(clockwise: true) }
     func flipHorizontal() { adjustments.flip(horizontal: true) }

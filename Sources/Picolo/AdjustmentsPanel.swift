@@ -27,31 +27,41 @@ private struct SliderRow: View {
 /// The right-hand inspector with all adjustment sliders.
 struct AdjustmentsPanel: View {
     @ObservedObject var model: EditorModel
+    @State private var collapsed = Set(UserDefaults.standard.stringArray(forKey: "collapsedGroups") ?? [])
+
+    /// Applies a partial reset as a single adjustments mutation (one undo step).
+    private func resetFields(_ mutate: @escaping (inout Adjustments) -> Void) -> () -> Void {
+        {
+            var a = model.adjustments
+            mutate(&a)
+            model.adjustments = a
+        }
+    }
 
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 14) {
-                group("Tone") {
+                group("Tone", reset: resetFields { $0.exposure = 0; $0.brightness = 0; $0.contrast = 1; $0.clarity = 0 }) {
                     SliderRow(title: "Exposure", value: $model.adjustments.exposure, range: -3...3, neutral: 0)
                     SliderRow(title: "Brightness", value: $model.adjustments.brightness, range: -1...1, neutral: 0)
                     SliderRow(title: "Contrast", value: $model.adjustments.contrast, range: 0.25...4, neutral: 1)
                     SliderRow(title: "Clarity", value: $model.adjustments.clarity, range: 0...1, neutral: 0)
                 }
-                group("Light") {
+                group("Light", reset: resetFields { $0.highlights = 1; $0.shadows = 0 }) {
                     SliderRow(title: "Highlights", value: $model.adjustments.highlights, range: 0...1, neutral: 1)
                     SliderRow(title: "Shadows", value: $model.adjustments.shadows, range: -1...1, neutral: 0)
                 }
-                group("Levels") {
+                group("Levels", reset: resetFields { $0.inputBlack = 0; $0.inputWhite = 1; $0.midtones = 1; $0.outputBlack = 0; $0.outputWhite = 1 }) {
                     LevelsView(model: model)
                 }
-                group("Color") {
+                group("Color", reset: resetFields { $0.saturation = 1; $0.vibrance = 0; $0.temperature = 0; $0.tint = 0; $0.hueRotation = 0 }) {
                     SliderRow(title: "Saturation", value: $model.adjustments.saturation, range: 0...2, neutral: 1)
                     SliderRow(title: "Vibrance", value: $model.adjustments.vibrance, range: -1...1, neutral: 0)
                     SliderRow(title: "Temperature", value: $model.adjustments.temperature, range: -2000...2000, neutral: 0)
                     SliderRow(title: "Tint", value: $model.adjustments.tint, range: -150...150, neutral: 0)
                     SliderRow(title: "Hue", value: $model.adjustments.hueRotation, range: -180...180, neutral: 0)
                 }
-                group("Black & White") {
+                group("Black & White", reset: resetFields { $0.monochrome = false; $0.monoR = 0.299; $0.monoG = 0.587; $0.monoB = 0.114 }) {
                     toggleRow("Monochrome", isOn: $model.adjustments.monochrome)
                     if model.adjustments.monochrome {
                         SliderRow(title: "Red Mix", value: $model.adjustments.monoR, range: 0...1, neutral: 0.299)
@@ -59,24 +69,24 @@ struct AdjustmentsPanel: View {
                         SliderRow(title: "Blue Mix", value: $model.adjustments.monoB, range: 0...1, neutral: 0.114)
                     }
                 }
-                group("Detail") {
+                group("Detail", reset: resetFields { $0.sharpen = 0; $0.grain = 0 }) {
                     SliderRow(title: "Sharpen", value: $model.adjustments.sharpen, range: 0...2, neutral: 0)
                     SliderRow(title: "Grain", value: $model.adjustments.grain, range: 0...1, neutral: 0)
                 }
-                group("Blur") {
+                group("Blur", reset: resetFields { $0.gaussianBlur = 0; $0.motionBlurRadius = 0; $0.motionBlurAngle = 0; $0.zoomBlur = 0 }) {
                     SliderRow(title: "Gaussian", value: $model.adjustments.gaussianBlur, range: 0...50, neutral: 0)
                     SliderRow(title: "Motion", value: $model.adjustments.motionBlurRadius, range: 0...100, neutral: 0)
                     SliderRow(title: "Motion Angle", value: $model.adjustments.motionBlurAngle, range: -180...180, neutral: 0)
                     SliderRow(title: "Zoom", value: $model.adjustments.zoomBlur, range: 0...40, neutral: 0)
                 }
-                group("Effects") {
+                group("Effects", reset: resetFields { $0.vignette = 0; $0.vignetteRadius = 1; $0.sepia = 0; $0.posterize = 0; $0.invert = false }) {
                     SliderRow(title: "Vignette", value: $model.adjustments.vignette, range: 0...1, neutral: 0)
                     SliderRow(title: "Vignette Radius", value: $model.adjustments.vignetteRadius, range: 0...2, neutral: 1)
                     SliderRow(title: "Sepia", value: $model.adjustments.sepia, range: 0...1, neutral: 0)
                     SliderRow(title: "Posterize", value: $model.adjustments.posterize, range: 0...14, neutral: 0)
                     toggleRow("Invert", isOn: $model.adjustments.invert)
                 }
-                group("Geometry") {
+                group("Geometry", reset: resetFields { $0.straightenAngle = 0 }) {
                     SliderRow(title: "Straighten", value: $model.adjustments.straightenAngle, range: -15...15, neutral: 0)
                 }
                 group("Export") {
@@ -141,12 +151,43 @@ struct AdjustmentsPanel: View {
     }
 
     @ViewBuilder
-    private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+    private func group<Content: View>(_ title: String, reset: (() -> Void)? = nil,
+                                      @ViewBuilder _ content: () -> Content) -> some View {
+        let isCollapsed = collapsed.contains(title)
         VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
-            content()
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .rotationEffect(.degrees(isCollapsed ? -90 : 0))
+                    .foregroundStyle(.secondary)
+                Text(title.uppercased())
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if let reset {
+                    Button(action: reset) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Reset \(title) to neutral")
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { toggleCollapse(title) }
+            if !isCollapsed {
+                content()
+            }
         }
+    }
+
+    private func toggleCollapse(_ title: String) {
+        if collapsed.contains(title) {
+            collapsed.remove(title)
+        } else {
+            collapsed.insert(title)
+        }
+        UserDefaults.standard.set(Array(collapsed), forKey: "collapsedGroups")
     }
 }
