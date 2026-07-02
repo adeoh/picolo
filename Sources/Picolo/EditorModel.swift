@@ -8,6 +8,10 @@ import UniformTypeIdentifiers
 /// all I/O (open, save, clipboard, drag in/out). The view layer observes this.
 @MainActor
 final class EditorModel: ObservableObject {
+    /// Single instance shared by the App scene and the app delegate (which
+    /// needs it for open-file events).
+    static let shared = EditorModel()
+
     /// The unedited source image. Nil when nothing is loaded.
     @Published private(set) var original: CIImage?
     /// Live adjustment values; mutating any of these re-renders the preview.
@@ -32,7 +36,17 @@ final class EditorModel: ObservableObject {
     /// Non-nil presents a modal error alert (real failures only; transient
     /// misses like an empty pasteboard still just beep).
     @Published var errorMessage: String?
-    /// Luminance histogram of the source, normalized to 0...1, in display space.
+    /// Canvas zoom: nil = fit to window, otherwise an absolute scale where
+    /// 1.0 shows one image pixel per point (100%).
+    @Published var zoom: Double?
+    /// Pan offset in canvas points, only meaningful while zoomed.
+    @Published var panOffset: CGSize = .zero
+    /// The fit scale the canvas last used, reported back so the zoom readout
+    /// and the zoom in/out steps have a concrete number in fit mode.
+    @Published var fitScale: Double = 1
+    /// Live luminance histogram, normalized to 0...1, in display space. It
+    /// reflects every adjustment *except* the levels remap itself, so the
+    /// levels handles keep pointing at the tones they operate on.
     @Published private(set) var histogram: [Float] = []
     /// Source file URL, when the image came from / was saved to disk.
     @Published private(set) var fileURL: URL?
@@ -64,7 +78,8 @@ final class EditorModel: ObservableObject {
         original = img
         fileURL = url
         pixelSize = img.extent.size
-        histogram = Self.computeHistogram(of: img, context: context)
+        zoom = nil
+        panOffset = .zero
         // A fresh image starts a fresh history; the reset to neutral must not
         // itself land on the undo stack.
         undoCommitTask?.cancel()
@@ -82,6 +97,14 @@ final class EditorModel: ObservableObject {
     /// bars line up with the tones the user perceives and the levels handles.
     private static func computeHistogram(of image: CIImage, context: CIContext,
                                          bins: Int = 128) -> [Float] {
+        // The histogram recomputes on every slider tick; a ~512px proxy is
+        // statistically identical and keeps the reduce pass cheap.
+        var image = image
+        let maxDim = max(image.extent.width, image.extent.height)
+        if maxDim > 512 {
+            let s = 512 / maxDim
+            image = image.transformed(by: CGAffineTransform(scaleX: s, y: s))
+        }
         let encode = CIFilter.linearToSRGBToneCurve()
         encode.inputImage = image
         guard let encoded = encode.outputImage else { return [] }
@@ -131,10 +154,15 @@ final class EditorModel: ObservableObject {
     // MARK: - Rendering
 
     private func scheduleRender() {
-        guard let original else { preview = nil; return }
+        guard let original else { preview = nil; histogram = []; return }
         let edited = adjustments.apply(to: original)
         guard let cg = context.createCGImage(edited, from: edited.extent) else { return }
         preview = NSImage(cgImage: cg, size: edited.extent.size)
+        pixelSize = edited.extent.size
+        // Histogram of the pre-levels edit: exposure/contrast/etc. move the
+        // bars live, while the levels stage still sees "its" input tones.
+        let preLevels = adjustments.apply(to: original, includeLevels: false)
+        histogram = Self.computeHistogram(of: preLevels, context: context)
     }
 
     /// Renders the current edit at full resolution as a CGImage.
@@ -157,6 +185,7 @@ final class EditorModel: ObservableObject {
 
     private func recordUndo(from oldValue: Adjustments) {
         guard !isRestoringAdjustments, oldValue != adjustments else { return }
+        trackNudgeTarget(from: oldValue)
         redoStack.removeAll()
         if pendingUndoBase == nil { pendingUndoBase = oldValue }
         undoCommitTask?.cancel()
@@ -193,6 +222,43 @@ final class EditorModel: ObservableObject {
         isRestoringAdjustments = false
     }
 
+    // MARK: - Zoom
+
+    private static let zoomSteps: [Double] = [0.05, 0.1, 0.25, 0.33, 0.5, 0.67,
+                                              1, 1.5, 2, 3, 4, 6, 8]
+
+    /// The scale currently on screen (fit mode reports the canvas fit scale).
+    var effectiveZoom: Double { zoom ?? fitScale }
+
+    func zoomIn() {
+        guard hasImage else { return }
+        let current = effectiveZoom
+        setZoom(Self.zoomSteps.first(where: { $0 > current * 1.001 }) ?? current)
+    }
+
+    func zoomOut() {
+        guard hasImage else { return }
+        let current = effectiveZoom
+        setZoom(Self.zoomSteps.last(where: { $0 < current * 0.999 }) ?? current)
+    }
+
+    func zoomToFit() {
+        zoom = nil
+        panOffset = .zero
+    }
+
+    func zoomToActualSize() { setZoom(1) }
+
+    private func setZoom(_ new: Double) {
+        // Keep the same image point centered: pan scales with the zoom.
+        let old = effectiveZoom
+        if old > 0 {
+            let f = new / old
+            panOffset = CGSize(width: panOffset.width * f, height: panOffset.height * f)
+        }
+        zoom = new
+    }
+
     // MARK: - Editing helpers
 
     func reset() { adjustments = .neutral }
@@ -227,6 +293,55 @@ final class EditorModel: ObservableObject {
                                       y: c.minY + yUp * c.height,
                                       width: d.width * c.width,
                                       height: d.height * c.height)
+    }
+
+    // MARK: - Keyboard nudge
+
+    /// One entry per slider-backed value, so arrow keys can fine-tune the
+    /// control the user touched last without any focus-ring ceremony.
+    private struct NudgeTarget {
+        let get: (Adjustments) -> Double
+        let set: (inout Adjustments, Double) -> Void
+        let range: ClosedRange<Double>
+    }
+
+    private static let nudgeTargets: [NudgeTarget] = [
+        .init(get: { $0.exposure }, set: { $0.exposure = $1 }, range: -3...3),
+        .init(get: { $0.brightness }, set: { $0.brightness = $1 }, range: -1...1),
+        .init(get: { $0.contrast }, set: { $0.contrast = $1 }, range: 0.25...4),
+        .init(get: { $0.saturation }, set: { $0.saturation = $1 }, range: 0...2),
+        .init(get: { $0.highlights }, set: { $0.highlights = $1 }, range: 0...1),
+        .init(get: { $0.shadows }, set: { $0.shadows = $1 }, range: -1...1),
+        .init(get: { $0.temperature }, set: { $0.temperature = $1 }, range: -2000...2000),
+        .init(get: { $0.motionBlurRadius }, set: { $0.motionBlurRadius = $1 }, range: 0...100),
+        .init(get: { $0.motionBlurAngle }, set: { $0.motionBlurAngle = $1 }, range: -180...180),
+        .init(get: { $0.inputBlack }, set: { $0.inputBlack = $1 }, range: 0...1),
+        .init(get: { $0.inputWhite }, set: { $0.inputWhite = $1 }, range: 0...1),
+        .init(get: { $0.midtones }, set: { $0.midtones = $1 }, range: 0.1...3),
+        .init(get: { $0.outputBlack }, set: { $0.outputBlack = $1 }, range: 0...1),
+        .init(get: { $0.outputWhite }, set: { $0.outputWhite = $1 }, range: 0...1),
+    ]
+
+    private var lastNudgeIndex: Int?
+
+    private func trackNudgeTarget(from oldValue: Adjustments) {
+        let changed = Self.nudgeTargets.indices.filter {
+            Self.nudgeTargets[$0].get(oldValue) != Self.nudgeTargets[$0].get(adjustments)
+        }
+        // Exactly one value moved = a slider interaction; bulk changes
+        // (reset, undo, geometry) shouldn't retarget the arrows.
+        if changed.count == 1 { lastNudgeIndex = changed[0] }
+    }
+
+    private func nudge(by direction: Double, coarse: Bool) -> Bool {
+        guard let index = lastNudgeIndex else { return false }
+        let target = Self.nudgeTargets[index]
+        let span = target.range.upperBound - target.range.lowerBound
+        let step = span / (coarse ? 20 : 100) * direction
+        let value = min(max(target.get(adjustments) + step, target.range.lowerBound),
+                        target.range.upperBound)
+        target.set(&adjustments, value)
+        return true
     }
 
     // MARK: - Before/after peek
@@ -274,6 +389,13 @@ final class EditorModel: ObservableObject {
         if isCropping, event.type == .keyDown {
             if event.keyCode == 36 || event.keyCode == 76 { commitCrop(); return true }  // return / enter
             if event.keyCode == 53 { cancelCrop(); return true }                          // esc
+        }
+        // ← / → nudge the last-touched slider (⇧ for a coarser step).
+        if event.type == .keyDown, hasImage, !isCropping,
+           event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+           event.keyCode == 123 || event.keyCode == 124 {
+            let direction: Double = event.keyCode == 124 ? 1 : -1
+            return nudge(by: direction, coarse: event.modifierFlags.contains(.shift))
         }
         return false
     }

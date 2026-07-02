@@ -1,8 +1,21 @@
 import SwiftUI
+import AppKit
+
+/// Receives open-file events. `.onOpenURL` alone misses files delivered at
+/// process launch (the event can arrive before the SwiftUI view attaches),
+/// so document opens route through the classic delegate instead.
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let url = urls.first else { return }
+        EditorModel.shared.load(url: url)
+    }
+}
 
 @main
 struct PicoloApp: App {
-    @StateObject private var model = EditorModel()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var model = EditorModel.shared
 
     var body: some Scene {
         Window("Picolo", id: "main") {
@@ -13,7 +26,6 @@ struct PicoloApp: App {
                 AdjustmentsPanel(model: model)
             }
             .frame(minWidth: 620, minHeight: 420)
-            .onOpenURL { url in model.load(url: url) }
             .alert("Something went wrong", isPresented: Binding(
                 get: { model.errorMessage != nil },
                 set: { if !$0 { model.errorMessage = nil } }
@@ -44,6 +56,22 @@ struct PicoloApp: App {
                 Button("Redo") { model.redo() }
                     .keyboardShortcut("z", modifiers: [.command, .shift])
                     .disabled(!model.canRedo)
+            }
+            // View — zoom
+            CommandGroup(before: .toolbar) {
+                Button("Zoom In") { model.zoomIn() }
+                    .keyboardShortcut("+")
+                    .disabled(!model.hasImage)
+                Button("Zoom Out") { model.zoomOut() }
+                    .keyboardShortcut("-")
+                    .disabled(!model.hasImage)
+                Button("Zoom to Fit") { model.zoomToFit() }
+                    .keyboardShortcut("0")
+                    .disabled(!model.hasImage)
+                Button("Actual Size") { model.zoomToActualSize() }
+                    .keyboardShortcut("1")
+                    .disabled(!model.hasImage)
+                Divider()
             }
             // Image — geometry
             CommandMenu("Image") {

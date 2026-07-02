@@ -40,8 +40,9 @@ struct Adjustments: Equatable {
 
     /// Applies the pipeline to `input` and returns the edited image.
     /// Order is geometry → exposure → tone/color → highlight-shadow → white
-    /// balance → gamma.
-    func apply(to input: CIImage) -> CIImage {
+    /// balance → gamma. `includeLevels: false` stops just before the levels
+    /// remap — that's the image the live levels histogram should describe.
+    func apply(to input: CIImage, includeLevels: Bool = true) -> CIImage {
         var image = applyGeometry(to: input)
         let extent = image.extent
 
@@ -77,7 +78,9 @@ struct Adjustments: Equatable {
             image = f.outputImage ?? image
         }
 
-        image = applyLevels(to: image)
+        if includeLevels {
+            image = applyLevels(to: image)
+        }
 
         if motionBlurRadius > 0 {
             // Clamp first so the blur samples real edge pixels instead of fading

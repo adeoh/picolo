@@ -5,9 +5,15 @@ import SwiftUI
 /// white) along the bottom — the same affordance as the Photoshop levels box.
 struct LevelsView: View {
     @ObservedObject var model: EditorModel
+    @Environment(\.colorScheme) private var scheme
 
     private let boxHeight: CGFloat = 104
     private let handleStrip: CGFloat = 14   // space above/below the histogram for handles
+
+    private var boxFill: Color { scheme == .dark ? Color(white: 0.12) : Color(white: 0.97) }
+    private var boxBorder: Color { scheme == .dark ? Color(white: 0.28) : Color(white: 0.75) }
+    private var barFill: Color { scheme == .dark ? Color(white: 0.5) : Color(white: 0.55) }
+    private var guideLine: Color { scheme == .dark ? Color(white: 0.32) : Color(white: 0.72) }
 
     var body: some View {
         GeometryReader { geo in
@@ -17,18 +23,18 @@ struct LevelsView: View {
 
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(white: 0.12))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(white: 0.28)))
+                    .fill(boxFill)
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(boxBorder))
 
                 HistogramShape(bins: model.histogram)
-                    .fill(Color(white: 0.5))
+                    .fill(barFill)
                     .frame(width: plotRect.width, height: plotRect.height)
                     .offset(x: plotRect.minX, y: plotRect.minY)
 
                 // Faint guide lines dropping from the input handles.
                 ForEach(inputGuides(width: w), id: \.self) { x in
                     Rectangle()
-                        .fill(Color(white: 0.32))
+                        .fill(guideLine)
                         .frame(width: 1, height: plotRect.height)
                         .offset(x: x, y: plotRect.minY)
                 }

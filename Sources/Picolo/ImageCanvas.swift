@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 struct ImageCanvas: View {
     @ObservedObject var model: EditorModel
     @State private var dropTargeted = false
+    @State private var panStart: CGSize?
+    @State private var magnifyStart: Double?
 
     var body: some View {
         ZStack {
@@ -13,10 +15,11 @@ struct ImageCanvas: View {
 
             if let display = model.displayImage {
                 GeometryReader { geo in
-                    let fit = Self.fitRect(imageSize: display.size, in: geo.size, inset: 16)
-                    image(display, in: fit)
+                    let fitScale = Self.fitScale(imageSize: display.size, in: geo.size, inset: 16)
+                    let rect = imageRect(size: display.size, canvas: geo.size, fitScale: fitScale)
+                    image(display, in: rect)
                     if model.isCropping {
-                        CropOverlay(model: model, imageRect: fit)
+                        CropOverlay(model: model, imageRect: rect)
                     }
                     if model.showOriginal {
                         Text("BEFORE")
@@ -25,7 +28,13 @@ struct ImageCanvas: View {
                             .background(.ultraThinMaterial, in: Capsule())
                             .position(x: geo.size.width / 2, y: 24)
                     }
+                    readout
+                        .position(x: geo.size.width / 2, y: geo.size.height - 18)
+                    Color.clear
+                        .onAppear { model.fitScale = fitScale }
+                        .onChange(of: fitScale) { model.fitScale = $0 }
                 }
+                .clipped()
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "photo.on.rectangle.angled")
@@ -49,31 +58,83 @@ struct ImageCanvas: View {
     }
 
     @ViewBuilder
-    private func image(_ nsImage: NSImage, in fit: CGRect) -> some View {
+    private func image(_ nsImage: NSImage, in rect: CGRect) -> some View {
         let base = Image(nsImage: nsImage)
             .resizable()
-            .frame(width: fit.width, height: fit.height)
-            .position(x: fit.midX, y: fit.midY)
-        // Drag-out conflicts with the crop handles, so it pauses in crop mode.
+            .frame(width: rect.width, height: rect.height)
+            .position(x: rect.midX, y: rect.midY)
+            .gesture(magnifyGesture)
+        // Drag-out conflicts with the crop handles and with panning, so it
+        // only runs in plain fit mode.
         if model.isCropping {
             base
+        } else if model.zoom != nil {
+            base.gesture(panGesture)
         } else {
             base.onDrag { model.dragProvider() ?? NSItemProvider() }
         }
     }
 
-    /// Aspect-fit `imageSize` into `container` with a margin on all sides.
-    static func fitRect(imageSize: CGSize, in container: CGSize, inset: CGFloat) -> CGRect {
-        let avail = CGSize(width: max(container.width - inset * 2, 1),
-                           height: max(container.height - inset * 2, 1))
-        guard imageSize.width > 0, imageSize.height > 0 else {
-            return CGRect(origin: CGPoint(x: inset, y: inset), size: avail)
+    private var readout: some View {
+        Text("\(Int(model.pixelSize.width)) × \(Int(model.pixelSize.height)) px · \(Int((model.effectiveZoom * 100).rounded()))%")
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(.ultraThinMaterial, in: Capsule())
+    }
+
+    // MARK: - Zoom / pan geometry
+
+    static func fitScale(imageSize: CGSize, in container: CGSize, inset: CGFloat) -> Double {
+        guard imageSize.width > 0, imageSize.height > 0 else { return 1 }
+        return min(max(container.width - inset * 2, 1) / imageSize.width,
+                   max(container.height - inset * 2, 1) / imageSize.height)
+    }
+
+    /// Where the image sits in the canvas: centered at fit scale, or scaled
+    /// and panned (with the pan clamped so the image never fully escapes).
+    private func imageRect(size: CGSize, canvas: CGSize, fitScale: Double) -> CGRect {
+        let scale = model.zoom ?? fitScale
+        let w = size.width * scale, h = size.height * scale
+        let offset = model.zoom == nil ? .zero : clampedPan(model.panOffset,
+                                                            imageSize: CGSize(width: w, height: h),
+                                                            canvas: canvas)
+        return CGRect(x: (canvas.width - w) / 2 + offset.width,
+                      y: (canvas.height - h) / 2 + offset.height,
+                      width: w, height: h)
+    }
+
+    /// Axes where the image fits stay centered; overflowing axes clamp so the
+    /// image edge can't cross the canvas midline gap.
+    private func clampedPan(_ pan: CGSize, imageSize: CGSize, canvas: CGSize) -> CGSize {
+        func clampAxis(_ v: CGFloat, image: CGFloat, avail: CGFloat) -> CGFloat {
+            guard image > avail else { return 0 }
+            let limit = (image - avail) / 2 + 16
+            return min(max(v, -limit), limit)
         }
-        let scale = min(avail.width / imageSize.width, avail.height / imageSize.height)
-        let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
-        return CGRect(x: (container.width - size.width) / 2,
-                      y: (container.height - size.height) / 2,
-                      width: size.width, height: size.height)
+        return CGSize(width: clampAxis(pan.width, image: imageSize.width, avail: canvas.width),
+                      height: clampAxis(pan.height, image: imageSize.height, avail: canvas.height))
+    }
+
+    private var panGesture: some Gesture {
+        DragGesture(minimumDistance: 1)
+            .onChanged { value in
+                let start = panStart ?? model.panOffset
+                panStart = start
+                model.panOffset = CGSize(width: start.width + value.translation.width,
+                                         height: start.height + value.translation.height)
+            }
+            .onEnded { _ in panStart = nil }
+    }
+
+    private var magnifyGesture: some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                let start = magnifyStart ?? model.effectiveZoom
+                magnifyStart = start
+                model.zoom = min(max(start * value, 0.05), 8)
+            }
+            .onEnded { _ in magnifyStart = nil }
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -101,11 +162,13 @@ struct ImageCanvas: View {
 
 /// Classic transparency checkerboard so transparent images read clearly.
 private struct CheckerboardBackground: View {
+    @Environment(\.colorScheme) private var scheme
+
     var body: some View {
         Canvas { context, size in
             let tile: CGFloat = 12
-            let light = Color(white: 0.22)
-            let dark = Color(white: 0.16)
+            let light = scheme == .dark ? Color(white: 0.22) : Color(white: 0.93)
+            let dark = scheme == .dark ? Color(white: 0.16) : Color(white: 0.86)
             context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(dark))
             var y: CGFloat = 0
             var row = 0

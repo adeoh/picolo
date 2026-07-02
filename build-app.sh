@@ -17,6 +17,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Picolo"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
+cp "$ROOT/Resources/Picolo.icns" "$APP/Contents/Resources/Picolo.icns"
 
 # Ad-hoc sign so Gatekeeper lets a locally built app run.
 codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
