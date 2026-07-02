@@ -19,7 +19,7 @@ struct ImageCanvas: View {
                     let rect = imageRect(size: display.size, canvas: geo.size, fitScale: fitScale)
                     image(display, in: rect)
                     if model.isCropping {
-                        CropOverlay(model: model, imageRect: rect)
+                        CropOverlay(model: model, imageRect: rect, canvasSize: geo.size)
                     }
                     if model.showOriginal {
                         Text("BEFORE")

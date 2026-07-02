@@ -8,6 +8,9 @@ struct CropOverlay: View {
     @ObservedObject var model: EditorModel
     /// Frame of the displayed image within the canvas, in canvas coordinates.
     let imageRect: CGRect
+    /// Canvas size, so overlay chrome can stay on screen even when the image
+    /// fills (or overflows) the canvas.
+    let canvasSize: CGSize
 
     @State private var dragStart: CGRect?
     @State private var aspect: AspectPreset = .free
@@ -54,8 +57,11 @@ struct CropOverlay: View {
                     .gesture(resizeGesture(handle))
             }
 
+            // Below the image when there's room, floating over its bottom edge
+            // when there isn't — never off screen.
             toolbar
-                .position(x: imageRect.midX, y: imageRect.maxY + 24)
+                .position(x: min(max(imageRect.midX, 180), canvasSize.width - 180),
+                          y: min(imageRect.maxY + 24, canvasSize.height - 28))
         }
         .onChange(of: aspect) { newValue in
             if let r = newValue.ratio { snapDraft(toRatio: r) }
