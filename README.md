@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Resources/icon.svg" width="120" alt="Picolo icon">
+</p>
+
 <h1 align="center">Picolo</h1>
 
 <p align="center">
@@ -9,6 +13,10 @@
   <a href="https://github.com/adeoh/picolo/releases/latest"><img alt="Download" src="https://img.shields.io/github/v/release/adeoh/picolo?label=download&style=for-the-badge"></a>
   <img alt="Platform" src="https://img.shields.io/badge/macOS-13%2B-black?style=for-the-badge">
   <img alt="Swift" src="https://img.shields.io/badge/Swift-6-orange?style=for-the-badge">
+</p>
+
+<p align="center">
+  <img src="docs/screenshot.png" alt="Picolo editing an image">
 </p>
 
 ---
